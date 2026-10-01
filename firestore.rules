@@ -1,0 +1,214 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Default-deny all documents by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Validators
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'email', 'displayName', 'photoURL', 'themeAccent', 
+          'defaultFont', 'defaultAspectRatio', 'defaultBusiness', 
+          'defaultAudience', 'defaultGoal', 'forgedAssetsCount', 
+          'lastActiveAt', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!('themeAccent' in data) || (data.themeAccent in ['orange', 'lime']))
+        && (!('defaultFont' in data) || (data.defaultFont is string && data.defaultFont.size() <= 64))
+        && (!('defaultAspectRatio' in data) || (data.defaultAspectRatio in ['4:5', '9:16', '1:1']))
+        && (!('defaultBusiness' in data) || (data.defaultBusiness is string && data.defaultBusiness.size() <= 256))
+        && (!('defaultAudience' in data) || (data.defaultAudience is string && data.defaultAudience.size() <= 512))
+        && (!('defaultGoal' in data) || (data.defaultGoal is string && data.defaultGoal.size() <= 256))
+        && (!('forgedAssetsCount' in data) || (data.forgedAssetsCount is number && data.forgedAssetsCount >= 0))
+        && (!('lastActiveAt' in data) || (data.lastActiveAt is string && data.lastActiveAt.size() <= 64))
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidUserActivity(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'actionType', 'title', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'actionType', 'title', 'details', 'createdAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.actionType is string && data.actionType.size() <= 64
+        && data.title is string && data.title.size() <= 256
+        && (!('details' in data) || (data.details is string && data.details.size() <= 1024))
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidForgedAsset(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'business', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'business', 'audience', 'goal', 
+          'themeAccent', 'font', 'aspectRatio', 
+          'hookRate', 'ctr', 'roas', 'createdAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.business is string && data.business.size() <= 256
+        && (!('audience' in data) || (data.audience is string && data.audience.size() <= 512))
+        && (!('goal' in data) || (data.goal is string && data.goal.size() <= 256))
+        && (!('themeAccent' in data) || (data.themeAccent in ['orange', 'lime']))
+        && (!('font' in data) || (data.font is string && data.font.size() <= 64))
+        && (!('aspectRatio' in data) || (data.aspectRatio in ['4:5', '9:16', '1:1']))
+        && (!('hookRate' in data) || data.hookRate is number)
+        && (!('ctr' in data) || data.ctr is number)
+        && (!('roas' in data) || data.roas is number)
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidCampaignMetric(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'date', 'campaignName', 'channel', 'impressions', 'clicks', 'conversions', 'spend', 'revenue', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'date', 'campaignName', 'channel',
+          'impressions', 'clicks', 'conversions', 'spend', 'revenue',
+          'ctr', 'cvr', 'roas', 'hookRate', 'cpa', 'createdAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.date is string && data.date.size() <= 32
+        && data.campaignName is string && data.campaignName.size() <= 256
+        && data.channel is string && data.channel.size() <= 64
+        && data.impressions is number && data.impressions >= 0
+        && data.clicks is number && data.clicks >= 0
+        && data.conversions is number && data.conversions >= 0
+        && data.spend is number && data.spend >= 0
+        && data.revenue is number && data.revenue >= 0
+        && (!('ctr' in data) || data.ctr is number)
+        && (!('cvr' in data) || data.cvr is number)
+        && (!('roas' in data) || data.roas is number)
+        && (!('hookRate' in data) || data.hookRate is number)
+        && (!('cpa' in data) || data.cpa is number)
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidFeedback(data) {
+      return data.keys().hasAll(['id', 'userId', 'type', 'title', 'description', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'userName', 'type', 'title', 'description', 'rating', 'status', 'createdAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId == request.auth.uid
+        && (!('userName' in data) || (data.userName is string && data.userName.size() <= 128))
+        && data.type in ['feature_suggestion', 'bug_report', 'general_feedback']
+        && data.title is string && data.title.size() <= 256
+        && data.description is string && data.description.size() <= 2048
+        && (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5))
+        && data.status in ['open', 'in_review', 'resolved']
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // Test connection document rule
+    match /test/{testId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User profile collection
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false; // Blanket user listing is strictly prohibited to prevent scraping
+      allow create: if isOwner(userId) 
+        && isValidId(userId)
+        && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) 
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // User activities subcollection
+      match /activities/{activityId} {
+        allow get: if isOwner(userId) && isValidId(activityId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) 
+          && isValidId(activityId)
+          && isValidUserActivity(incoming(), userId);
+        allow update: if isOwner(userId) 
+          && isValidId(activityId)
+          && isValidUserActivity(incoming(), userId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(activityId);
+      }
+
+      // User saved forged assets subcollection
+      match /assets/{assetId} {
+        allow get: if isOwner(userId) && isValidId(assetId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) 
+          && isValidId(assetId)
+          && isValidForgedAsset(incoming(), userId);
+        allow update: if isOwner(userId) 
+          && isValidId(assetId)
+          && isValidForgedAsset(incoming(), userId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(assetId);
+      }
+
+      // User campaign metrics subcollection
+      match /metrics/{metricId} {
+        allow get: if isOwner(userId) && isValidId(metricId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) 
+          && isValidId(metricId)
+          && isValidCampaignMetric(incoming(), userId);
+        allow update: if isOwner(userId) 
+          && isValidId(metricId)
+          && isValidCampaignMetric(incoming(), userId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(metricId);
+      }
+    }
+
+    // Feedback collection
+    match /feedback/{feedbackId} {
+      allow get: if isSignedIn() && isValidId(feedbackId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() 
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming())
+        && incoming().status == 'open';
+      allow update: if isSignedIn() 
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming())
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'rating', 'type']);
+      allow delete: if isSignedIn() && isValidId(feedbackId) && existing().userId == request.auth.uid;
+    }
+  }
+}
