@@ -52,14 +52,23 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [userMetrics, setUserMetrics] = useState<CampaignMetric[]>([]);
 
   useEffect(() => {
+    let authRevision = 0;
+    let accountId: string | null = null;
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      const revision = ++authRevision;
       setUser(currentUser);
-      if (!currentUser) {
+      const nextAccountId = currentUser?.uid ?? null;
+      // Token refreshes keep the same account's subscriptions and collections.
+      if (nextAccountId !== accountId || !currentUser) {
         setProfile(null);
         setUserActivities([]);
         setUserAssets([]);
         setUserFeedbacks([]);
-        setLoading(false);
+        setUserMetrics([]);
+      }
+      accountId = nextAccountId;
+      setLoading(Boolean(currentUser));
+      if (!currentUser) {
         return;
       }
 
@@ -67,6 +76,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         const userDocRef = doc(db, 'users', currentUser.uid);
         const userDocSnap = await getDoc(userDocRef);
+        if (revision !== authRevision) return;
 
         if (!userDocSnap.exists()) {
           const nowStr = new Date().toISOString();
@@ -87,45 +97,55 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             updatedAt: nowStr,
           };
           await setDoc(userDocRef, initialProfile);
+          if (revision !== authRevision) return;
           setProfile(initialProfile);
         } else {
           setProfile(userDocSnap.data() as UserProfile);
         }
       } catch (err) {
+        if (revision !== authRevision) return;
         handleFirestoreError(err, OperationType.GET, userDocPath);
       } finally {
-        setLoading(false);
+        if (revision === authRevision) setLoading(false);
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      authRevision++;
+      unsubscribeAuth();
+    };
   }, []);
 
   // Listen to profile updates
   useEffect(() => {
     if (!user) return;
+    let active = true;
     const userDocPath = `users/${user.uid}`;
     const unsubscribe = onSnapshot(
       doc(db, 'users', user.uid),
       (snapshot) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         if (snapshot.exists()) {
           setProfile(snapshot.data() as UserProfile);
         }
       },
       (error) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         handleFirestoreError(error, OperationType.GET, userDocPath);
       }
     );
-    return () => unsubscribe();
+    return () => { active = false; unsubscribe(); };
   }, [user]);
 
   // Listen to activities
   useEffect(() => {
     if (!user) return;
+    let active = true;
     const activitiesPath = `users/${user.uid}/activities`;
     const unsubscribe = onSnapshot(
       collection(db, 'users', user.uid, 'activities'),
       (snapshot) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         const items: UserActivity[] = [];
         snapshot.forEach((docSnap) => {
           items.push(docSnap.data() as UserActivity);
@@ -134,19 +154,22 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setUserActivities(items);
       },
       (error) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         handleFirestoreError(error, OperationType.LIST, activitiesPath);
       }
     );
-    return () => unsubscribe();
+    return () => { active = false; unsubscribe(); };
   }, [user]);
 
   // Listen to user's saved forged assets
   useEffect(() => {
     if (!user) return;
+    let active = true;
     const assetsPath = `users/${user.uid}/assets`;
     const unsubscribe = onSnapshot(
       collection(db, 'users', user.uid, 'assets'),
       (snapshot) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         const items: ForgedAsset[] = [];
         snapshot.forEach((docSnap) => {
           items.push(docSnap.data() as ForgedAsset);
@@ -155,20 +178,23 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setUserAssets(items);
       },
       (error) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         handleFirestoreError(error, OperationType.LIST, assetsPath);
       }
     );
-    return () => unsubscribe();
+    return () => { active = false; unsubscribe(); };
   }, [user]);
 
   // Listen to user's feedback submissions
   useEffect(() => {
     if (!user) return;
+    let active = true;
     const feedbackPath = 'feedback';
     const feedbackQuery = query(collection(db, 'feedback'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(
       feedbackQuery,
       (snapshot) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         const items: FeedbackItem[] = [];
         snapshot.forEach((docSnap) => {
           items.push(docSnap.data() as FeedbackItem);
@@ -177,19 +203,22 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setUserFeedbacks(items);
       },
       (error) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         handleFirestoreError(error, OperationType.LIST, feedbackPath);
       }
     );
-    return () => unsubscribe();
+    return () => { active = false; unsubscribe(); };
   }, [user]);
 
   // Listen to user's campaign metrics
   useEffect(() => {
     if (!user) return;
+    let active = true;
     const metricsPath = `users/${user.uid}/metrics`;
     const unsubscribe = onSnapshot(
       collection(db, 'users', user.uid, 'metrics'),
       (snapshot) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         const items: CampaignMetric[] = [];
         snapshot.forEach((docSnap) => {
           items.push(docSnap.data() as CampaignMetric);
@@ -198,10 +227,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setUserMetrics(items);
       },
       (error) => {
+        if (!active || auth.currentUser?.uid !== user.uid) return;
         handleFirestoreError(error, OperationType.LIST, metricsPath);
       }
     );
-    return () => unsubscribe();
+    return () => { active = false; unsubscribe(); };
   }, [user]);
 
   const loginWithGoogle = async () => {
